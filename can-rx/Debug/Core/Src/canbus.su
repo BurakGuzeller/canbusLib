@@ -1,0 +1,5 @@
+../Core/Src/canbus.c:57:6:canbusRxInit	104	static
+../Core/Src/canbus.c:89:6:canbusConfigFilter	24	static
+../Core/Src/canbus.c:131:6:canbusTxInit	80	static
+../Core/Src/canbus.c:148:6:canTxExtMessage	216	static
+../Core/Src/canbus.c:179:6:canTxStdMessage	224	static
