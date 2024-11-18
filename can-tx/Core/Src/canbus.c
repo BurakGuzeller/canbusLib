@@ -49,116 +49,75 @@
 
 
 /**
- * @brief  CAN bus alımını başlatır.
+ * @brief  CAN bus alımını başlatır ve filtreleme yapılandırmasını uygular.
  * @param  hcan: CAN kontrolörü için işaretçi.
  * @param  filtre: CAN filtreleme yapılandırma yapısı için işaretçi.
  * @retval None
  */
 void canbusRxInit(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filtre) {
     uint8_t debugMessage[60] = { 0 };
-    HAL_CAN_Start(hcan);
-    canbusNoFilter(hcan, filtre);
-    HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
-    sprintf((char*)debugMessage, "CANBUS IS START SUCCESSFULLY\r\n");
-    HAL_UART_Transmit(UARTx, debugMessage, strlen((char*)debugMessage), HAL_MAX_DELAY);
+
+    if (HAL_CAN_Start(hcan) != HAL_OK) {
+        sprintf((char*)debugMessage, "CANBUS START FAILED\r\n");
+        HAL_UART_Transmit(&huart1, debugMessage, strlen((char*)debugMessage), HAL_MAX_DELAY);
+        Error_Handler();
+    }
+
+    canbusConfigFilter(hcan, filtre, CAN_ID_EXT, CAN_FILTERMODE_IDMASK, CAN_FILTERSCALE_32BIT, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+
+    if(HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
+    	Error_Handler();
+    }
+
+    sprintf((char*)debugMessage, "CANBUS IS STARTED SUCCESSFULLY\r\n");
+    HAL_UART_Transmit(&huart1, debugMessage, strlen((char*)debugMessage), HAL_MAX_DELAY);
 }
 
 /**
- * @brief  CAN filtre yapılandırmasını yapar.
+ * @brief  CAN filtre yapılandırmasını dinamik olarak yapar.
  * @param  hcan: CAN kontrolörü için işaretçi.
  * @param  filtre: CAN filtre yapılandırma yapısı için işaretçi.
+ * @param  idType: Filtrelenecek ID tipi (CAN_ID_STD veya CAN_ID_EXT).
+ * @param  filterMode: Filtre modu (CAN_FILTERMODE_IDMASK veya CAN_FILTERMODE_IDLIST).
+ * @param  filterScale: Filtre ölçeği (CAN_FILTERSCALE_16BIT veya CAN_FILTERSCALE_32BIT).
+ * @param  filterHigh: Filtrelenecek ID'nin High kısmı (16-bit veya 32-bit'e göre hesaplanır).
+ * @param  filterLow: Filtrelenecek ID'nin Low kısmı (sadece 32-bit modda kullanılır).
+ * @param  maskHigh: Maske değerinin High kısmı.
+ * @param  maskLow: Maske değerinin Low kısmı.
  * @retval None
  */
-void canbusNoFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filtre) {
-	filtre->FilterActivation = CAN_FILTER_ENABLE;
-	filtre->FilterBank = 14;
-	filtre->FilterFIFOAssignment = CAN_FILTER_FIFO0;
-	filtre->FilterIdHigh = 0;
-	filtre->FilterIdLow = 0;
-	filtre->FilterMaskIdHigh = 0;
-	filtre->FilterMaskIdLow = 0;
-	filtre->FilterMode = CAN_FILTERMODE_IDMASK;
-	filtre->FilterScale = CAN_FILTERSCALE_32BIT;
-
-	if(HAL_CAN_ConfigFilter(hcan, filtre) != HAL_OK) {
-		Error_Handler();
-	}
-}
-
-/**
- * @brief  CAN filtre standart id yapılandırmasını yapar.
- * @param  hcan: CAN kontrolörü için işaretçi.
- * @param  filtre: CAN filtre yapılandırma yapısı için işaretçi.
- * @param  filtreHigh : filtrelenecek High ID
- * @param  filtreLow  : filtrelenecek Low ID
- * @param  maskHigh   : maskelecek High ID' ye gore maske
- * @param  maskLow    : maskelecek Low  ID' ye gore maske
- * @retval None
- */
-void canbusStdIDMaskFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filtre, uint32_t filtreHigh, uint32_t maskHigh, uint32_t filtreLow, uint32_t maskLow) {
+void canbusConfigFilter(
+    CAN_HandleTypeDef *hcan,
+    CAN_FilterTypeDef *filtre,
+    uint32_t idType,
+    uint32_t filterMode,
+    uint32_t filterScale,
+    uint32_t filterHigh,
+    uint32_t filterLow,
+    uint32_t maskHigh,
+    uint32_t maskLow
+) {
     filtre->FilterActivation = CAN_FILTER_ENABLE;
     filtre->FilterBank = 14;
     filtre->FilterFIFOAssignment = CAN_FILTER_FIFO0;
-    filtre->FilterIdHigh = filtreHigh << 5;
-    filtre->FilterIdLow = filtreLow << 5;
-    filtre->FilterMaskIdHigh = maskHigh << 5;
-    filtre->FilterMaskIdLow = maskLow << 5;
-    filtre->FilterMode = CAN_FILTERMODE_IDMASK;
-    filtre->FilterScale = CAN_FILTERSCALE_16BIT;   // STD filtreleme olduğu için CAN_FILTERSCALE_16BIT kullanabilirsiniz.
+    filtre->FilterMode = filterMode;
+    filtre->FilterScale = filterScale;
 
-    if (HAL_CAN_ConfigFilter(hcan, filtre) != HAL_OK) {
-        Error_Handler();
+    if (filterScale == CAN_FILTERSCALE_16BIT) {
+        // 16-bit ID/Maske ayarları
+        filtre->FilterIdHigh = (filterHigh << 5) & 0xFFFF;
+        filtre->FilterIdLow = (filterLow << 5) & 0xFFFF;
+        filtre->FilterMaskIdHigh = (maskHigh << 5) & 0xFFFF;
+        filtre->FilterMaskIdLow = (maskLow << 5) & 0xFFFF;
+    } else if (filterScale == CAN_FILTERSCALE_32BIT) {
+        // 32-bit ID/Maske ayarları
+        filtre->FilterIdHigh = (filterHigh >> 13) & 0xFFFF;
+        filtre->FilterIdLow = ((filterLow << 3) & 0xFFFF) | (idType == CAN_ID_EXT ? CAN_IDE_32 : 0);
+        filtre->FilterMaskIdHigh = (maskHigh >> 13) & 0xFFFF;
+        filtre->FilterMaskIdLow = ((maskLow << 3) & 0xFFFF) | (idType == CAN_ID_EXT ? CAN_IDE_32 : 0);
     }
-}
 
-/**
- * @brief  CAN filtre extended id yapılandırmasını yapar.
- * @param  hcan: CAN kontrolörü için işaretçi.
- * @param  filtre: CAN filtre yapılandırma yapısı için işaretçi.
- * @param  filtreHigh : filtrelenecek High ID
- * @param  filtreLow  : filtrelenecek Low ID
- * @param  maskHigh   : maskelecek High ID' ye gore maske
- * @param  maskLow    : maskelecek Low  ID' ye gore maske
- * @retval None
- */
-void canbusExtIDMaskFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filtre, uint32_t filtreHigh, uint32_t maskHigh, uint32_t filtreLow, uint32_t maskLow) {
-    filtre->FilterActivation = CAN_FILTER_ENABLE;
-    filtre->FilterBank = 14;
-    filtre->FilterFIFOAssignment = CAN_FILTER_FIFO0;
-    filtre->FilterIdHigh = filtreHigh >> 13;
-    filtre->FilterIdLow = filtreLow << 3 | CAN_IDE_32;
-    filtre->FilterMaskIdHigh = maskHigh >> 13;
-    filtre->FilterMaskIdLow = maskLow << 3 | CAN_IDE_32;
-    filtre->FilterMode = CAN_FILTERMODE_IDMASK;
-    filtre->FilterScale = CAN_FILTERSCALE_32BIT;
-
-    if (HAL_CAN_ConfigFilter(hcan, filtre) != HAL_OK) {
-        Error_Handler();
-    }
-}
-
-/**
- * @brief  CAN filtre ID LİST filtre yapilandirmasidir. En fazla 4 istenilen ID den mesaj yakalanabilir.
- * @param  hcan: CAN kontrolörü için işaretçi.
- * @param  filtre: CAN filtre yapılandırma yapısı için işaretçi.
- * @param  ID1ToBeCaught : ID list yontemi ile yakalanmasini istediginiz ID 1
- * @param  ID1ToBeCaught : ID list yontemi ile yakalanmasini istediginiz ID 2
- * @param  ID1ToBeCaught : ID list yontemi ile yakalanmasini istediginiz ID 3
- * @param  ID1ToBeCaught : ID list yontemi ile yakalanmasini istediginiz ID 4
- *
- * @retval None
- */
-void canbusIDListFilter(CAN_HandleTypeDef *hcan, CAN_FilterTypeDef *filtre, uint32_t ID1ToBeCaught, uint32_t ID2ToBeCaught, uint32_t ID3ToBeCaught,uint32_t ID4ToBeCaught) {
-    filtre->FilterActivation 		= CAN_FILTER_ENABLE;
-    filtre->FilterBank 				= 14;
-    filtre->FilterFIFOAssignment 	= CAN_FILTER_FIFO0;
-    filtre->FilterIdHigh 			= ID1ToBeCaught >> 13;
-    filtre->FilterIdLow 			= ID2ToBeCaught >> 3 | CAN_IDE_32;
-    filtre->FilterMaskIdHigh 		= ID3ToBeCaught >>13;
-    filtre->FilterMaskIdLow 		= ID4ToBeCaught >> 3 | CAN_IDE_32;
-    filtre->FilterMode 				= CAN_FILTERMODE_IDMASK;
-    filtre->FilterScale	 			= CAN_FILTERSCALE_32BIT;
-
+    // Filtreyi CAN kontrolörüne uygula
     if (HAL_CAN_ConfigFilter(hcan, filtre) != HAL_OK) {
         Error_Handler();
     }
@@ -175,7 +134,7 @@ void canbusTxInit(CAN_HandleTypeDef *hcan) {
     HAL_CAN_Start(hcan);
 
     sprintf((char*)debugMessage, "CANBUS IS START SUCCESSFULLY\r\n");
-    HAL_UART_Transmit(UARTx, debugMessage, strlen((char*)debugMessage), 1000);
+    HAL_UART_Transmit(&huart1, debugMessage, strlen((char*)debugMessage), 1000);
 }
 
 /**
@@ -189,7 +148,6 @@ void canbusTxInit(CAN_HandleTypeDef *hcan) {
 void canTxExtMessage(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *txHeader, uint32_t canID, uint8_t data[]) {
     char tempData[128] = { 0 };
     int length;
-    uint32_t TxMailbox;
 
     txHeader->DLC = 8;
     txHeader->ExtId = canID;   // 29 bit uzun ID
@@ -206,7 +164,7 @@ void canTxExtMessage(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *txHeader, uin
                       data[4], data[5], data[6], data[7]);
 
     if (length > 0) {
-        HAL_UART_Transmit(UARTx, (uint8_t *)tempData, length,10000);  // DMA kullanımı CPU yükünü azaltır.
+        HAL_UART_Transmit(&huart1, (uint8_t *)tempData, length,10000);  // DMA kullanımı CPU yükünü azaltır.
     }
 }
 
@@ -224,7 +182,6 @@ void canTxStdMessage(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *txHeader, uin
     uint32_t TxMailbox;
 
 
-
     txHeader->DLC = 8;
     txHeader->StdId = canID;
     txHeader->IDE = CAN_ID_STD;        // 11 bit standart ID
@@ -240,6 +197,6 @@ void canTxStdMessage(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *txHeader, uin
                       data[4], data[5], data[6], data[7]);
 
     if (length > 0) {
-        HAL_UART_Transmit(UARTx, (uint8_t *)tempData, length,1000);  // DMA kullanımı CPU yükünü azaltır.
+        HAL_UART_Transmit(&huart1, (uint8_t *)tempData, length,1000);  // DMA kullanımı CPU yükünü azaltır.
     }
 }
